@@ -374,6 +374,12 @@ def download_audio(filename):
         filename,
         as_attachment=True # Set as_attachment to True for download
     )
+# --- Custom Error Handlers ---
+@app.errorhandler(404)
+def page_not_found(e):
+    return jsonify({
+        "error": "Oops! The resource you’re looking for was not found. Please check the URL or try again."
+    }), 404
 
 # Run the Flask development server if the script is executed directly
 if __name__ == '__main__':
