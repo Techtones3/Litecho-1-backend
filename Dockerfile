@@ -1,21 +1,20 @@
-# Use an official Python image
-FROM python:3.11-slim
+FROM python:3.11-slim-buster
 
-# Install system dependencies (including tesseract)
-RUN apt-get update && \
-    apt-get install -y tesseract-ocr libgl1 && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Set working directory
 WORKDIR /app
 
-# Copy code and install Python deps
-COPY . /app
-RUN pip install --no-cache-dir -r requirements.txt
+# Install system dependencies, including tesseract-ocr
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    libtesseract-dev \
+    poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
 
-# Expose port
-EXPOSE 5000
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install -r requirements.txt
 
-# Run the app
-CMD ["python", "app.py"]
+# Copy the application code
+COPY . .
+
+# Set the entry point for your application using Gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "app:app"]
