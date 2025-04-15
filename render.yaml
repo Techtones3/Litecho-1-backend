@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: techtones-flaskapp
+    name: techtones_flaskapp
     env: python
     buildCommand: |
       apt-get update && apt-get install -y tesseract-ocr
