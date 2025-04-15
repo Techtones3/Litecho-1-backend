@@ -76,6 +76,135 @@ def synthesize_voice(text, language, voice):
     voice_id = VOICE_MAP.get(voice, VOICE_MAP["male"])
     return asyncio.run(synthesize_voice_edge(text, voice_id))
 
+@app.route('/convert_text', methods=['POST'])
+def convert_text():
+    data = request.json
+    text = data.get('text')
+    user_id = data.get('user_id')
+    language = data.get('language', 'en')
+    voice = data.get('voice', 'male').strip().lower()
+
+    if not text or not user_id:
+        return jsonify({"error": "Missing text or user_id"}), 400
+
+    db = SessionLocal()
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        db.close()
+        return jsonify({"error": "User not found"}), 404
+
+    translated_text = GoogleTranslator(source="auto", target=language).translate(text) if language != "en" else text
+
+    audio_filename = synthesize_voice(translated_text, language, voice)
+    audio_file = AudioFile(filename=audio_filename, user_id=user.id, type="text")
+    db.add(audio_file)
+    db.commit()
+    db.close()
+
+    return jsonify({
+        "message": "Text converted to audio successfully",
+        "audio_path": f"/static/audio/{audio_filename}"
+    })
+
+@app.route('/convert_pdf', methods=['POST'])
+def convert_pdf():
+    file = request.files['file']
+    user_id = request.form.get('user_id')
+    language = request.form.get('language', 'en')
+    voice = request.form.get('voice', 'male').strip().lower()
+
+    db = SessionLocal()
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        db.close()
+        return jsonify({"error": "User not found"}), 404
+
+    reader = PyPDF2.PdfReader(file)
+    text = ''.join([page.extract_text() or '' for page in reader.pages])
+    translated_text = GoogleTranslator(source="auto", target=language).translate(text) if language != "en" else text
+
+    audio_filename = synthesize_voice(translated_text, language, voice)
+    audio_file = AudioFile(filename=audio_filename, user_id=user.id, type="pdf")
+    db.add(audio_file)
+    db.commit()
+    db.close()
+
+    return jsonify({
+        "message": "PDF converted to audio successfully",
+        "audio_path": f"/static/audio/{audio_filename}"
+    })
+
+@app.route('/convert_image', methods=['POST'])
+def convert_image():
+    file = request.files['file']
+    user_id = request.form.get('user_id')
+    language = request.form.get('language', 'en')
+    voice = request.form.get('voice', 'male').strip().lower()
+
+    db = SessionLocal()
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        db.close()
+        return jsonify({"error": "User not found"}), 404
+
+    img = Image.open(file)
+    text = pytesseract.image_to_string(img)
+    translated_text = GoogleTranslator(source="auto", target=language).translate(text) if language != "en" else text
+
+    audio_filename = synthesize_voice(translated_text, language, voice)
+    audio_file = AudioFile(filename=audio_filename, user_id=user.id, type="image")
+    db.add(audio_file)
+    db.commit()
+    db.close()
+
+    return jsonify({
+        "message": "Image converted to audio successfully",
+        "audio_path": f"/static/audio/{audio_filename}"
+    })
+
+@app.route('/delete_audio', methods=['DELETE'])
+def delete_audio():
+    data = request.json or {}
+    audio_id = data.get('audio_id')
+    user_id = data.get('user_id')
+
+    if not audio_id or not user_id:
+        return jsonify({"error": "Missing audio_id or user_id"}), 400
+
+    db = SessionLocal()
+    audio = db.query(AudioFile).filter(AudioFile.id == audio_id, AudioFile.user_id == user_id).first()
+    if not audio:
+        db.close()
+        return jsonify({"error": "Audio file not found"}), 404
+
+    path = os.path.join(app.config['UPLOAD_FOLDER'], audio.filename)
+    if os.path.exists(path):
+        os.remove(path)
+
+    db.delete(audio)
+    db.commit()
+    db.close()
+
+    return jsonify({"message": "Audio file deleted successfully"})
+
+@app.route('/audio-history/<user_id>', methods=['GET'])
+def audio_history(user_id):
+    db = SessionLocal()
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        db.close()
+        return jsonify({"error": "User not found"}), 404
+
+    audios = db.query(AudioFile).filter(AudioFile.user_id == user.id).all()
+    data = [{
+        "id": a.id,
+        "filename": a.filename,
+        "created_at": a.created_at.isoformat(),
+        "type": a.type
+    } for a in audios]
+    db.close()
+    return jsonify(data)
+
 @app.route('/rename_audio', methods=['POST'])
 def rename_audio():
     data = request.json
@@ -101,24 +230,6 @@ def rename_audio():
 
     db.close()
     return jsonify({"message": "Audio file renamed successfully"})
-
-@app.route('/audio-history/<user_id>', methods=['GET'])
-def audio_history(user_id):
-    db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        db.close()
-        return jsonify({"error": "User not found"}), 404
-
-    audios = db.query(AudioFile).filter(AudioFile.user_id == user.id).all()
-    data = [{
-        "id": a.id,
-        "filename": a.filename,
-        "created_at": a.created_at.isoformat(),
-        "type": a.type
-    } for a in audios]
-    db.close()
-    return jsonify(data)
 
 @app.route('/static/audio/<filename>')
 def serve_audio(filename):
