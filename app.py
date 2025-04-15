@@ -49,6 +49,47 @@ class AudioFile(Base):
 
 Base.metadata.create_all(bind=engine)
 
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.json
+    username = data.get('username')
+    email = data.get('email')
+    password = data.get('password')
+
+    if not username or not email or not password:
+        return jsonify({"message": "Missing required fields"}), 400
+
+    db = SessionLocal()
+    existing_user = db.query(User).filter((User.username == username) | (User.email == email)).first()
+    if existing_user:
+        db.close()
+        return jsonify({"message": "User already exists"}), 400
+
+    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    new_user = User(username=username, email=email, password=hashed_password.decode('utf-8'))
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    db.close()
+    return jsonify({"message": "Registration successful", "user_id": new_user.id})
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    email = data.get('email')
+    password = data.get('password')
+
+    if not email or not password:
+        return jsonify({"message": "Missing email or password"}), 400
+
+    db = SessionLocal()
+    user = db.query(User).filter(User.email == email).first()
+    db.close()
+
+    if user and bcrypt.checkpw(password.encode('utf-8'), user.password.encode('utf-8')):
+        return jsonify({"message": "Login successful", "user_id": user.id})
+    return jsonify({"message": "Invalid credentials"}), 401
+
 # Full Edge-TTS Voice Map
 VOICE_MAP = {
     "male": "en-US-GuyNeural",
