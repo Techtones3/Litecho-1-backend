@@ -74,6 +74,28 @@ async def synthesize_voice_edge(text, voice_id):
 
 def synthesize_voice(text, language, voice):
     voice_id = VOICE_MAP.get(voice, VOICE_MAP["male"])
+
+    # Map language codes to Edge-TTS compatible prefixes (adjust as needed)
+    language_prefix = language.split('-')[0].lower()
+    if language_prefix == 'en':
+        if voice == 'uk_male':
+            voice_id = VOICE_MAP['uk_male']
+        elif voice == 'uk_female':
+            voice_id = VOICE_MAP['uk_female']
+        elif voice == 'indian_male':
+            voice_id = VOICE_MAP['indian_male']
+        elif voice == 'indian_female':
+            voice_id = VOICE_MAP['indian_female']
+        else: # Default to US English
+            voice_id = VOICE_MAP.get(voice, VOICE_MAP["male"])
+    elif language_prefix == 'es':
+        voice_id = VOICE_MAP.get(f"spanish_{'male' if voice == 'male' else 'female'}", VOICE_MAP["spanish_male"])
+    elif language_prefix == 'de':
+        voice_id = VOICE_MAP.get(f"german_{'male' if voice == 'male' else 'female'}", VOICE_MAP["german_male"])
+    elif language_prefix == 'fr':
+        voice_id = VOICE_MAP.get(f"french_{'male' if voice == 'male' else 'female'}", VOICE_MAP["french_male"])
+    # Add more language mappings as needed
+
     return asyncio.run(synthesize_voice_edge(text, voice_id))
 
 @app.route('/convert_text', methods=['POST'])
@@ -121,10 +143,7 @@ def convert_pdf():
 
     reader = PyPDF2.PdfReader(file)
     text = ''.join([page.extract_text() or '' for page in reader.pages])
-    if language and language != "en" and text.strip():
-        translated_text = GoogleTranslator(source="auto", target=language).translate(text)
-    else:
-        translated_text = text
+    translated_text = GoogleTranslator(source="auto", target=language).translate(text) if language != "en" else text
 
     audio_filename = synthesize_voice(translated_text, language, voice)
     audio_file = AudioFile(filename=audio_filename, user_id=user.id, type="pdf")
@@ -152,10 +171,7 @@ def convert_image():
 
     img = Image.open(file)
     text = pytesseract.image_to_string(img)
-    if language and language != "en" and text.strip():
-        translated_text = GoogleTranslator(source="auto", target=language).translate(text)
-    else:
-        translated_text = text
+    translated_text = GoogleTranslator(source="auto", target=language).translate(text) if language != "en" else text
 
     audio_filename = synthesize_voice(translated_text, language, voice)
     audio_file = AudioFile(filename=audio_filename, user_id=user.id, type="image")
