@@ -121,7 +121,10 @@ def convert_pdf():
 
     reader = PyPDF2.PdfReader(file)
     text = ''.join([page.extract_text() or '' for page in reader.pages])
-    translated_text = GoogleTranslator(source="auto", target=language).translate(text) if language != "en" else text
+    if language and language != "en" and text.strip():
+        translated_text = GoogleTranslator(source="auto", target=language).translate(text)
+    else:
+        translated_text = text
 
     audio_filename = synthesize_voice(translated_text, language, voice)
     audio_file = AudioFile(filename=audio_filename, user_id=user.id, type="pdf")
@@ -149,7 +152,10 @@ def convert_image():
 
     img = Image.open(file)
     text = pytesseract.image_to_string(img)
-    translated_text = GoogleTranslator(source="auto", target=language).translate(text) if language != "en" else text
+    if language and language != "en" and text.strip():
+        translated_text = GoogleTranslator(source="auto", target=language).translate(text)
+    else:
+        translated_text = text
 
     audio_filename = synthesize_voice(translated_text, language, voice)
     audio_file = AudioFile(filename=audio_filename, user_id=user.id, type="image")
