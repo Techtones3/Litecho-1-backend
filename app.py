@@ -376,7 +376,8 @@ def forgot_password():
     db.add(reset_token)
     db.commit()
 
-    print(f"[Reset Link] http://localhost:3000/reset-password?token={token}")
+    print(f"https://litecho-1.vercel.app/reset-password?token={token}"
+)
 
     db.close()
     return jsonify({"message": "Password reset link sent to your email."}), 200
