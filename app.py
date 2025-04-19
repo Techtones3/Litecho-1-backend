@@ -11,6 +11,8 @@ import bcrypt
 from deep_translator import GoogleTranslator
 import asyncio
 import edge_tts
+import secrets  # Add to the top
+from werkzeug.security import generate_password_hash  # Add at top if missing
 
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Text
 from sqlalchemy.ext.declarative import declarative_base
@@ -46,6 +48,16 @@ class AudioFile(Base):
     type = Column(String, nullable=False)
 
     user = relationship("User")
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id"))
+    token = Column(String, unique=True, index=True)
+    expires_at = Column(DateTime, default=lambda: datetime.datetime.utcnow() + datetime.timedelta(minutes=30))
+
+    user = relationship("User")
+
 
 Base.metadata.create_all(bind=engine)
 
@@ -138,7 +150,6 @@ def synthesize_voice(text, language, voice):
     # Add more language mappings as needed
 
     return asyncio.run(synthesize_voice_edge(text, voice_id))
-
 @app.route('/convert_text', methods=['POST'])
 def convert_text():
     data = request.json
@@ -157,8 +168,14 @@ def convert_text():
         return jsonify({"error": "User not found"}), 404
 
     translated_text = GoogleTranslator(source="auto", target=language).translate(text) if language != "en" else text
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    audio_filename = f"{timestamp}.mp3"
+    generated_filename = synthesize_voice(translated_text, language, voice)
+    os.rename(
+        os.path.join(app.config['UPLOAD_FOLDER'], generated_filename),
+        os.path.join(app.config['UPLOAD_FOLDER'], audio_filename)
+    )
 
-    audio_filename = synthesize_voice(translated_text, language, voice)
     audio_file = AudioFile(filename=audio_filename, user_id=user.id, type="text")
     db.add(audio_file)
     db.commit()
@@ -168,6 +185,7 @@ def convert_text():
         "message": "Text converted to audio successfully",
         "audio_path": f"/static/audio/{audio_filename}"
     })
+
 
 @app.route('/convert_pdf', methods=['POST'])
 def convert_pdf():
@@ -186,7 +204,19 @@ def convert_pdf():
     text = ''.join([page.extract_text() or '' for page in reader.pages])
     translated_text = GoogleTranslator(source="auto", target=language).translate(text) if language != "en" else text
 
-    audio_filename = synthesize_voice(translated_text, language, voice)
+    # Use original PDF name (without extension)
+    original_name = os.path.splitext(file.filename)[0]
+    audio_filename = f"{original_name}.mp3"
+
+    # Generate temporary audio filename
+    generated_filename = synthesize_voice(translated_text, language, voice)
+
+    # Rename temp to original-based name
+    os.rename(
+        os.path.join(app.config['UPLOAD_FOLDER'], generated_filename),
+        os.path.join(app.config['UPLOAD_FOLDER'], audio_filename)
+    )
+
     audio_file = AudioFile(filename=audio_filename, user_id=user.id, type="pdf")
     db.add(audio_file)
     db.commit()
@@ -196,6 +226,7 @@ def convert_pdf():
         "message": "PDF converted to audio successfully",
         "audio_path": f"/static/audio/{audio_filename}"
     })
+
 
 @app.route('/convert_image', methods=['POST'])
 def convert_image():
@@ -214,7 +245,19 @@ def convert_image():
     text = pytesseract.image_to_string(img)
     translated_text = GoogleTranslator(source="auto", target=language).translate(text) if language != "en" else text
 
-    audio_filename = synthesize_voice(translated_text, language, voice)
+    # Use original image name (without extension)
+    original_name = os.path.splitext(file.filename)[0]
+    audio_filename = f"{original_name}.mp3"
+
+    # Generate audio using edge-tts
+    generated_filename = synthesize_voice(translated_text, language, voice)
+
+    # Rename generated audio to match original image name
+    os.rename(
+        os.path.join(app.config['UPLOAD_FOLDER'], generated_filename),
+        os.path.join(app.config['UPLOAD_FOLDER'], audio_filename)
+    )
+
     audio_file = AudioFile(filename=audio_filename, user_id=user.id, type="image")
     db.add(audio_file)
     db.commit()
@@ -224,6 +267,7 @@ def convert_image():
         "message": "Image converted to audio successfully",
         "audio_path": f"/static/audio/{audio_filename}"
     })
+
 
 @app.route('/delete_audio', methods=['DELETE'])
 def delete_audio():
@@ -306,9 +350,98 @@ def download_audio(filename):
         as_attachment=True
     )
 
+    from flask import Flask, request, jsonify
+# (already imported) from flask_cors import CORS
+# (already imported) from sqlalchemy.orm import sessionmaker
+# (already imported) SessionLocal, User
+
+@app.route("/forgot-password", methods=["POST"])
+def forgot_password():
+    data = request.get_json()
+    email = data.get("email")
+
+    if not email:
+        return jsonify({"message": "Email is required"}), 400
+
+    db = SessionLocal()
+    user = db.query(User).filter(User.email == email).first()
+
+    if not user:
+        db.close()
+        return jsonify({"message": "No account found with that email"}), 404
+
+    import secrets
+    token = secrets.token_urlsafe(32)
+    reset_token = PasswordResetToken(user_id=user.id, token=token)
+    db.add(reset_token)
+    db.commit()
+
+    print(f"[Reset Link] http://localhost:3000/reset-password?token={token}")
+
+    db.close()
+    return jsonify({"message": "Password reset link sent to your email."}), 200
+
+
+
+@app.route("/reset-password", methods=["POST"])
+def reset_password():
+    data = request.get_json()
+    token = data.get("token")
+    new_password = data.get("newPassword")
+
+    if not token or not new_password:
+        return jsonify({"message": "Missing token or new password"}), 400
+
+    db = SessionLocal()
+    reset_entry = db.query(PasswordResetToken).filter(PasswordResetToken.token == token).first()
+
+    if not reset_entry or reset_entry.expires_at < datetime.datetime.utcnow():
+        db.close()
+        return jsonify({"message": "Invalid or expired token"}), 400
+
+    user = db.query(User).filter(User.id == reset_entry.user_id).first()
+    if not user:
+        db.close()
+        return jsonify({"message": "User not found"}), 404
+
+    hashed_password = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt())
+    user.password = hashed_password.decode("utf-8")
+
+    db.delete(reset_entry)  # cleanup
+    db.commit()
+    db.close()
+
+    return jsonify({"message": "Password updated successfully"})
+
 @app.errorhandler(404)
 def page_not_found(e):
     return jsonify({"error": "Oops! The resource you’re looking for was not found. Please check the URL or try again."}), 404
+
+import io
+import zipfile
+from flask import send_file
+
+@app.route("/download-zip", methods=["POST"])
+def download_zip():
+    data = request.get_json()
+    filenames = data.get("filenames", [])
+
+    if not filenames:
+        return jsonify({"error": "No files provided"}), 400
+
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, 'w') as zipf:
+        for filename in filenames:
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            if os.path.exists(filepath):
+                zipf.write(filepath, arcname=filename)
+    memory_file.seek(0)
+
+    return send_file(
+        memory_file,
+        download_name="audio_files.zip",
+        as_attachment=True
+    )
 
 if __name__ == '__main__':
     app.run(debug=True)
